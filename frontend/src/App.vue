@@ -25,8 +25,21 @@ import GridControl from './components/GridControl.vue'
 import BacktestReport from './components/BacktestReport.vue'
 import { useTradingStore } from './store/trading'
 const store = useTradingStore()
-onMounted(() => store.connectWS())
-onUnmounted(() => store.disconnectWS())
+
+// 从后台标签页 / bfcache 回到页面时，按同一份状态核对连接
+function onVisible() { if (document.visibilityState === 'visible') store.ensureConnected() }
+function onPageShow(e: PageTransitionEvent) { if (e.persisted) store.ensureConnected() }
+
+onMounted(() => {
+  store.connectWS()
+  document.addEventListener('visibilitychange', onVisible)
+  window.addEventListener('pageshow', onPageShow)
+})
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisible)
+  window.removeEventListener('pageshow', onPageShow)
+  store.disconnectWS()
+})
 </script>
 
 <style>
@@ -39,4 +52,8 @@ body{font-family:system-ui,sans-serif;background:#0a0e27;color:#e0e0e0}
 .dot{width:8px;height:8px;border-radius:50%;background:#ef4444}.dot.on{background:#22c55e}
 .main-grid{display:grid;grid-template-columns:1fr 360px;gap:12px;padding:12px 24px;min-height:85vh}
 .col-narrow{display:flex;flex-direction:column;gap:12px;overflow-y:auto}
+/* 行情中断时各面板的统一遮罩，与顶部「已断开」同一状态驱动 */
+.market-panel{position:relative}
+.market-offline{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;background:rgba(10,14,39,0.82);border-radius:8px;color:#94a3b8;font-size:12px;pointer-events:none;z-index:2}
+.market-offline .offline-dot{width:8px;height:8px;border-radius:50%;background:#ef4444}
 </style>

@@ -11,6 +11,9 @@ ACTIVE_CLIENTS = []
 SIM_RUNNING = True
 current_price = 100.0
 ticks_history = []
+latest_payload = None
+# 子线程推送行情必须复用主事件循环，不能在子线程内 get_event_loop()
+main_loop = None
 
 class GridConfig(BaseModel):
     lowerPrice: float = 95
@@ -21,7 +24,7 @@ class GridConfig(BaseModel):
 
 
 def simulate_market():
-    global current_price, ticks_history
+    global current_price, ticks_history, latest_payload
     price = 100.0
     while SIM_RUNNING:
         drift = 0.005 * math.sin(time.time() * 0.05)
@@ -45,14 +48,24 @@ def simulate_market():
         order_book = {"bids": bids, "asks": asks, "midPrice": price, "spread": round(asks[0][0] - bids[0][0], 2)}
 
         payload = json.dumps({"ticks": ticks_history[-60:], "orderBook": order_book})
-        for ws in ACTIVE_CLIENTS:
-            try: asyncio.run_coroutine_threadsafe(ws.send_text(payload), asyncio.get_event_loop())
-            except: pass
+        latest_payload = payload
+        # 必须通过启动时捕获的主循环跨线程调度；发送失败的客户端直接剔除
+        dead = []
+        for client in ACTIVE_CLIENTS:
+            try:
+                asyncio.run_coroutine_threadsafe(client.send_text(payload), main_loop)
+            except Exception:
+                dead.append(client)
+        for client in dead:
+            if client in ACTIVE_CLIENTS:
+                ACTIVE_CLIENTS.remove(client)
         time.sleep(0.5)
 
 
 @app.on_event("startup")
 async def startup():
+    global main_loop
+    main_loop = asyncio.get_running_loop()
     threading.Thread(target=simulate_market, daemon=True).start()
 
 
@@ -137,7 +150,15 @@ def run_backtest(config: GridConfig):
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     ACTIVE_CLIENTS.append(ws)
+    # 新连接（刷新/重连/重新进入）立刻收到最近一帧，面板马上有数据
+    if latest_payload is not None:
+        try:
+            await ws.send_text(latest_payload)
+        except Exception:
+            if ws in ACTIVE_CLIENTS:
+                ACTIVE_CLIENTS.remove(ws)
+            return
     try:
         while True: await ws.receive_text()
-    except: 
+    except:
         if ws in ACTIVE_CLIENTS: ACTIVE_CLIENTS.remove(ws)

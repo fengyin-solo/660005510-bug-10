@@ -1,5 +1,12 @@
 <template>
-  <div class="panel" style="margin-top:12px"><h4>📈 实时价格 + K线</h4><div ref="chart" class="chart"></div></div>
+  <div class="panel market-panel" style="margin-top:12px">
+    <h4>📈 实时价格 + K线</h4>
+    <div ref="chart" class="chart"></div>
+    <div class="market-offline" v-if="!store.wsConnected">
+      <span class="offline-dot"></span>
+      <span>行情已断开 · 等待重连…</span>
+    </div>
+  </div>
 </template>
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted } from 'vue'
@@ -21,6 +28,8 @@ function update() {
 }
 onMounted(()=>{if(chart.value){inst=echarts.init(chart.value);update()}})
 watch(()=>store.ticks,update,{deep:true})
+// 中断时数据已被清空，按同一份连接状态重绘为空图；恢复后随新行情刷新
+watch(()=>store.wsConnected,update)
 onUnmounted(()=>inst?.dispose())
 </script>
 <style scoped>.panel{background:#0f1535;border-radius:8px;padding:12px;border:1px solid #1e2a5a}.panel h4{color:#4fc3f7;font-size:13px;margin-bottom:4px}.chart{width:100%;height:300px}</style>

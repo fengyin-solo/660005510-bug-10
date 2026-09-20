@@ -1,5 +1,12 @@
 <template>
-  <div class="panel"><h4>📊 订单簿深度</h4><canvas ref="cvs" width="360" height="280" class="depth-canvas"></canvas></div>
+  <div class="panel market-panel">
+    <h4>📊 订单簿深度</h4>
+    <canvas ref="cvs" width="360" height="280" class="depth-canvas"></canvas>
+    <div class="market-offline" v-if="!store.wsConnected">
+      <span class="offline-dot"></span>
+      <span>行情已断开 · 等待重连…</span>
+    </div>
+  </div>
 </template>
 <script setup lang="ts">
 import { ref, watch } from 'vue'
@@ -28,5 +35,7 @@ function draw() {
   ctx.strokeStyle='#334155';ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke()
 }
 watch(()=>store.orderBook,draw,{deep:true})
+// 连接状态变化（中断清空/恢复重绘）同样触发一次绘制，避免残留上一轮盘口
+watch(()=>store.wsConnected,draw)
 </script>
 <style scoped>.panel{background:#0f1535;border-radius:8px;padding:12px;border:1px solid #1e2a5a}.panel h4{color:#4fc3f7;font-size:13px;margin-bottom:8px}.depth-canvas{display:block;margin:0 auto;border-radius:4px}</style>
