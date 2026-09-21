@@ -1,4 +1,4 @@
-import asyncio, time, random, math, json, threading
+import asyncio, time, random, math, json
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,10 +7,12 @@ from pydantic import BaseModel
 app = FastAPI(title="Grid Trading Engine")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-ACTIVE_CLIENTS = []
+ACTIVE_CLIENTS = set()
 SIM_RUNNING = True
 current_price = 100.0
 ticks_history = []
+latest_payload = None
+
 
 class GridConfig(BaseModel):
     lowerPrice: float = 95
@@ -20,40 +22,54 @@ class GridConfig(BaseModel):
     initialCapital: float = 100000
 
 
-def simulate_market():
-    global current_price, ticks_history
+def build_payload() -> str:
+    global current_price, ticks_history, latest_payload
+    price = current_price
+    tick = {
+        "time": time.strftime("%H:%M:%S"),
+        "price": round(price, 2),
+        "bid": round(price - random.uniform(0.01, 0.05), 2),
+        "ask": round(price + random.uniform(0.01, 0.05), 2),
+        "volume": random.randint(100, 5000)
+    }
+    ticks_history.append(tick)
+    if len(ticks_history) > 200:
+        ticks_history = ticks_history[-200:]
+
+    bids = [[round(price - 0.01 * i, 2), random.randint(100, 1000)] for i in range(1, 11)]
+    asks = [[round(price + 0.01 * i, 2), random.randint(100, 1000)] for i in range(1, 11)]
+    order_book = {"bids": bids, "asks": asks, "midPrice": price, "spread": round(asks[0][0] - bids[0][0], 2)}
+
+    latest_payload = json.dumps({"ticks": ticks_history[-60:], "orderBook": order_book})
+    return latest_payload
+
+
+async def simulate_market():
+    """行情模拟任务：运行在事件循环内，直接向所有已连接客户端推送。"""
+    global current_price
     price = 100.0
     while SIM_RUNNING:
         drift = 0.005 * math.sin(time.time() * 0.05)
         price += random.gauss(drift, 0.3)
         price = max(80, min(130, price))
         current_price = price
-        tick = {
-            "time": time.strftime("%H:%M:%S"),
-            "price": round(price, 2),
-            "bid": round(price - random.uniform(0.01, 0.05), 2),
-            "ask": round(price + random.uniform(0.01, 0.05), 2),
-            "volume": random.randint(100, 5000)
-        }
-        ticks_history.append(tick)
-        if len(ticks_history) > 200:
-            ticks_history = ticks_history[-200:]
 
-        # Order book
-        bids = [[round(price - 0.01 * i, 2), random.randint(100, 1000)] for i in range(1, 11)]
-        asks = [[round(price + 0.01 * i, 2), random.randint(100, 1000)] for i in range(1, 11)]
-        order_book = {"bids": bids, "asks": asks, "midPrice": price, "spread": round(asks[0][0] - bids[0][0], 2)}
+        payload = build_payload()
+        dead = []
+        for ws in list(ACTIVE_CLIENTS):
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            ACTIVE_CLIENTS.discard(ws)
 
-        payload = json.dumps({"ticks": ticks_history[-60:], "orderBook": order_book})
-        for ws in ACTIVE_CLIENTS:
-            try: asyncio.run_coroutine_threadsafe(ws.send_text(payload), asyncio.get_event_loop())
-            except: pass
-        time.sleep(0.5)
+        await asyncio.sleep(0.5)
 
 
 @app.on_event("startup")
 async def startup():
-    threading.Thread(target=simulate_market, daemon=True).start()
+    asyncio.create_task(simulate_market())
 
 
 @app.post("/api/backtest")
@@ -136,8 +152,20 @@ def run_backtest(config: GridConfig):
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    ACTIVE_CLIENTS.append(ws)
+    ACTIVE_CLIENTS.add(ws)
+    # 新连接立即收到最新一帧快照，刷新/重连后无需等待下一个推送周期
+    if latest_payload is not None:
+        try:
+            await ws.send_text(latest_payload)
+        except Exception:
+            ACTIVE_CLIENTS.discard(ws)
+            return
     try:
-        while True: await ws.receive_text()
-    except: 
-        if ws in ACTIVE_CLIENTS: ACTIVE_CLIENTS.remove(ws)
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        ACTIVE_CLIENTS.discard(ws)

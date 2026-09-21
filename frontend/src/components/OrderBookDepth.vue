@@ -1,5 +1,11 @@
 <template>
-  <div class="panel"><h4>📊 订单簿深度</h4><canvas ref="cvs" width="360" height="280" class="depth-canvas"></canvas></div>
+  <div class="panel">
+    <h4>📊 订单簿深度</h4>
+    <div class="depth-wrap">
+      <canvas ref="cvs" width="360" height="280" class="depth-canvas"></canvas>
+      <div v-if="!store.wsConnected" class="market-offline">行情已断开 · 等待重连</div>
+    </div>
+  </div>
 </template>
 <script setup lang="ts">
 import { ref, watch } from 'vue'
@@ -27,6 +33,13 @@ function draw() {
   })
   ctx.strokeStyle='#334155';ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke()
 }
-watch(()=>store.orderBook,draw,{deep:true})
+// 连接状态与行情都由 store 驱动：断开清空画布，恢复收到数据后重绘
+watch(()=>[store.orderBook, store.wsConnected], draw, {deep:true})
 </script>
-<style scoped>.panel{background:#0f1535;border-radius:8px;padding:12px;border:1px solid #1e2a5a}.panel h4{color:#4fc3f7;font-size:13px;margin-bottom:8px}.depth-canvas{display:block;margin:0 auto;border-radius:4px}</style>
+<style scoped>
+.panel{background:#0f1535;border-radius:8px;padding:12px;border:1px solid #1e2a5a}
+.panel h4{color:#4fc3f7;font-size:13px;margin-bottom:8px}
+.depth-wrap{position:relative}
+.depth-canvas{display:block;margin:0 auto;border-radius:4px}
+.market-offline{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:12px;background:rgba(10,14,39,0.72);border-radius:4px}
+</style>
